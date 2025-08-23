@@ -40,3 +40,18 @@ def format_duration(seconds):
     mins, secs = divmod(seconds, 60)
     hours, mins = divmod(mins, 60)
     return f"{int(hours):02}:{int(mins):02}:{int(secs):02}"
+
+def log_session(name, start_time, used_traffic, duration):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
+    with open(logFile, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {name} | {format_traffic(used_traffic)} | Длительность: {duration}\n")
+
+def load_traffic_totals():
+    if os.path.exists(trafficFile):
+        with open(trafficFile, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_traffic_totals(totals):
+    with open(trafficFile, "w", encoding="utf-8") as f:
+        json.dump(totals, f, ensure_ascii=False, indent=2)
