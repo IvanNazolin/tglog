@@ -2,11 +2,11 @@ import sqlite3
 import time
 import json
 import os
-from CONFIG import bdPath,bdName,logFile,trafficFile,BOT_TOKEN,CHAT_ID
+from CONFIG import bdPath, bdName, logFile, trafficFile, BOT_TOKEN, CHAT_ID
 import requests
 
 active_sessions = {}
-last_totals = {}  # тут будем хранить последние значения для расчета "за 3 минуты"
+last_totals = {}  # для подсчёта трафика за последние 3 минуты
 
 
 def send_session_end_message(name, start_time, end_time, duration, up_mb, down_mb):
@@ -21,6 +21,7 @@ def send_session_end_message(name, start_time, end_time, duration, up_mb, down_m
     )
     send_telegram_message(message)
 
+
 def send_telegram_message(message):
     for CHAT_Id in CHAT_ID:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -34,18 +35,22 @@ def send_telegram_message(message):
         except Exception as e:
             print(f"Ошибка отправки в Telegram: {e}")
 
+
 def format_traffic(mb):
     return f"{mb:.2f} MB" if mb < 1024 else f"{mb/1024:.2f} GB"
+
 
 def format_duration(seconds):
     mins, secs = divmod(seconds, 60)
     hours, mins = divmod(mins, 60)
     return f"{int(hours):02}:{int(mins):02}:{int(secs):02}"
 
+
 def log_session(name, start_time, used_traffic, duration):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
     with open(logFile, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {name} | {format_traffic(used_traffic)} | Длительность: {duration}\n")
+
 
 def main():
     global active_sessions, last_totals
@@ -67,7 +72,7 @@ def main():
     any_active = False
     telegram_message = ""
 
-    # Считаем текущий трафик (для расчета за последние 3 минуты)
+    # считаем текущий трафик для расчёта "за последние 3 минуты"
     current_totals = {}
     for row in rows:
         name = row[5]
@@ -76,7 +81,18 @@ def main():
         total = up + down
         current_totals[name] = total
 
-    # Логика сессий (как у тебя было)
+    # считаем разницу с прошлым замером
+    traffic_diff = {}
+    total_diff = 0
+    if last_totals:
+        for name, total in current_totals.items():
+            if name in last_totals:
+                diff = total - last_totals[name]
+                if diff > 0:
+                    traffic_diff[name] = diff
+                    total_diff += diff
+
+    # логика сессий
     for row in rows:
         name = row[5]
         up = float(row[2])
@@ -89,7 +105,12 @@ def main():
                 duration = format_duration(duration_secs)
                 used_traffic = ((up - session['start_up']) + (down - session['start_down'])) / 2**20
 
-                telegram_message += f"👤 <b>{name}</b>\n⏱️ {duration} | 📊 {format_traffic(used_traffic)}\n\n"
+                # добавляем прирост за последние 3 минуты
+                extra = ""
+                if name in traffic_diff:
+                    extra = f" | ➕ {format_traffic(traffic_diff[name])}"
+
+                telegram_message += f"👤 <b>{name}</b>\n⏱️ {duration} | 📊 {format_traffic(used_traffic)}{extra}\n\n"
                 any_active = True
 
                 updated_sessions[name] = {
@@ -98,7 +119,7 @@ def main():
                     'last_down': down
                 }
             else:
-                # Сессия завершена
+                # сессия завершена
                 duration_secs = int(current_time - session['start_time'])
                 duration = format_duration(duration_secs)
                 up_mb = (session['last_up'] - session['start_up']) / 2**20
@@ -121,26 +142,13 @@ def main():
 
     active_sessions = updated_sessions
 
-    # === Добавляем отчёт по трафику за последние 3 минуты ===
-    traffic_diff = {}
-    total_diff = 0
-    if last_totals:
-        for name, total in current_totals.items():
-            if name in last_totals:
-                diff = total - last_totals[name]
-                if diff > 0:
-                    traffic_diff[name] = diff
-                    total_diff += diff
-
+    # отправка в телеграм
     if not any_active:
         send_telegram_message("<b>🔕 Нет активных сессий в данный момент.</b>")
     else:
         msg = f"<b>📡 Активные сессии:</b>\n\n{telegram_message.strip()}"
-        if traffic_diff:
-            msg += "\n\n<b>📊 Трафик за последние 3 минуты:</b>\n"
-            for name, diff in traffic_diff.items():
-                msg += f"👤 {name}: {format_traffic(diff)}\n"
-            msg += f"\n<b>Всего:</b> {format_traffic(total_diff)}"
+        if total_diff > 0:
+            msg += f"\n\n<b>Всего за последние 3 минуты:</b> {format_traffic(total_diff)}"
         send_telegram_message(msg)
 
     last_totals = current_totals  # сохраняем текущее состояние
@@ -148,7 +156,16 @@ def main():
 
 
 if __name__ == "__main__":
+    # приветственное сообщение
+    start_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    send_telegram_message(f"🤖 <b>Мониторинг сессий запущен!</b>\n"
+                          f"🕒 Время старта: {start_time}\n"
+                          f"⏱️ Интервал проверки: 3 минуты\n"
+                          f"📡 Буду присылать активные сессии и расход трафика.")
+
+    # ждём ровного часа
     while time.ctime().split()[3][-2:] != "00":
         pass
+
     while True:
         main()
