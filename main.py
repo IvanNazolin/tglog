@@ -108,7 +108,7 @@ def main():
                 # добавляем прирост за последние 3 минуты
                 extra = ""
                 if name in traffic_diff:
-                    extra = f" | ➕ {format_traffic(traffic_diff[name])}"
+                    extra = f" | + {format_traffic(traffic_diff[name])}"
 
                 telegram_message += f"👤 <b>{name}</b>\n⏱️ {duration} | 📊 {format_traffic(used_traffic)}{extra}\n\n"
                 any_active = True
@@ -147,8 +147,6 @@ def main():
         send_telegram_message("<b>🔕 Нет активных сессий в данный момент.</b>")
     else:
         msg = f"<b>📡 Активные сессии:</b>\n\n{telegram_message.strip()}"
-        if total_diff > 0:
-            msg += f"\n\n<b>Всего за последние 3 минуты:</b> {format_traffic(total_diff)}"
         send_telegram_message(msg)
 
     last_totals = current_totals  # сохраняем текущее состояние
