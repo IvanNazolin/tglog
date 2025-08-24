@@ -4,6 +4,7 @@ import threading
 import telebot
 from telebot import types
 from CONFIG import bdPath, bdName, logFile, BOT_TOKEN,CHAT_ID
+from datetime import datetime
 
 # --- инициализация бота ---
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -158,13 +159,52 @@ def get_total_stats():
                    f"📊 Всего: {format_traffic(total)}\n\n")
     return report.strip()
 
+def get_today_stats():
+    today = datetime.now().strftime("%Y-%m-%d")
+    stats = {}
+
+    try:
+        with open(logFile, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith(f"[{today}"):
+                    # формат строки: [YYYY-MM-DD HH:MM:SS] name | traffic | ...
+                    try:
+                        parts = line.strip().split("] ")[1]  # отрезаем дату
+                        name, traffic, *_ = parts.split("|")
+                        name = name.strip()
+                        traffic_value = traffic.strip().split()[0]  # только число
+                        traffic_unit = traffic.strip().split()[1]   # MB или GB
+
+                        # приводим в MB
+                        if traffic_unit == "GB":
+                            traffic_mb = float(traffic_value) * 1024
+                        else:
+                            traffic_mb = float(traffic_value)
+
+                        if name not in stats:
+                            stats[name] = 0
+                        stats[name] += traffic_mb
+                    except Exception:
+                        continue
+    except FileNotFoundError:
+        return "<b>⚠️ Лог файл не найден.</b>"
+
+    if not stats:
+        return "<b>🔕 За сегодня сессий нет.</b>"
+
+    report = "<b>📊 Отчет за сегодня:</b>\n\n"
+    for name, mb in stats.items():
+        report += f"👤 <b>{name}</b> | 📊 {format_traffic(mb)}\n"
+    return report.strip()
+
 @bot.message_handler(func=lambda message: message.text in ["За все время", "Отчет за сегодня"])
 def handle_buttons(message):
     if message.text == "За все время":
         report = get_total_stats()
         bot.send_message(message.chat.id, report, parse_mode="HTML")
     elif message.text == "Отчет за сегодня":
-        bot.send_message(message.chat.id, "📊 Здесь будет отчёт только за сегодня.")
+        report = get_today_stats()
+        bot.send_message(message.chat.id, report, parse_mode="HTML")
 
 # --- запуск ---
 threading.Thread(target=send_periodic, daemon=True).start()
