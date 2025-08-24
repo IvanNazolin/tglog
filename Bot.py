@@ -3,11 +3,11 @@ import time
 import threading
 import telebot
 from telebot import types
-from CONFIG import bdPath, bdName, logFile, BOT_TOKEN
+from CONFIG import bdPath, bdName, logFile, BOT_TOKEN,CHAT_ID
 
 # --- инициализация бота ---
 bot = telebot.TeleBot(BOT_TOKEN)
-chat_ids = set()
+chat_ids = CHAT_ID
 active_sessions = {}
 last_totals = {}
 
@@ -120,7 +120,7 @@ def send_periodic():
 # --- команды ---
 @bot.message_handler(commands=['start'])
 def start_message(message):
-    chat_ids.add(message.chat.id)
+   # chat_ids.add(message.chat.id)
     bot.reply_to(message, "✅ Мониторинг подключен!\nЯ буду присылать тебе отчеты каждые 3 минуты.")
 
 @bot.message_handler(commands=['menu'])
@@ -131,10 +131,38 @@ def menu(message):
     keyboard.add(btn1, btn2)
     bot.send_message(message.chat.id,"Выбери отчёт:", reply_markup=keyboard)
 
+def get_total_stats():
+    connection = sqlite3.connect(f"{bdPath}/{bdName}")
+    cursor = connection.cursor()
+    cursor.execute("SELECT * FROM inbounds")
+    rows = cursor.fetchall()
+    connection.close()
+
+    stats = {}
+    for row in rows:
+        name = row[5]
+        up = float(row[2]) / 2**20   # в MB
+        down = float(row[3]) / 2**20
+        if name not in stats:
+            stats[name] = {"up": 0, "down": 0}
+        stats[name]["up"] += up
+        stats[name]["down"] += down
+
+    # формируем текст
+    report = "<b>📊 Статистика за всё время:</b>\n\n"
+    for name, values in stats.items():
+        total = values["up"] + values["down"]
+        report += (f"👤 <b>{name}</b>\n"
+                   f"⬆️ Upload: {format_traffic(values['up'])}\n"
+                   f"⬇️ Download: {format_traffic(values['down'])}\n"
+                   f"📊 Всего: {format_traffic(total)}\n\n")
+    return report.strip()
+
 @bot.message_handler(func=lambda message: message.text in ["За все время", "Отчет за сегодня"])
 def handle_buttons(message):
     if message.text == "За все время":
-        bot.send_message(message.chat.id, "📊 Здесь будет отчёт за всё время (из лога).")
+        report = get_total_stats()
+        bot.send_message(message.chat.id, report, parse_mode="HTML")
     elif message.text == "Отчет за сегодня":
         bot.send_message(message.chat.id, "📊 Здесь будет отчёт только за сегодня.")
 
