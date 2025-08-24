@@ -4,7 +4,7 @@ import threading
 from datetime import datetime
 import telebot
 from telebot import types
-from CONFIG import bdPath, bdName, logFile, BOT_TOKEN,CHAT_ID
+from CONFIG import bdPath, bdName, logFile, BOT_TOKEN, CHAT_ID
 
 # --- инициализация бота ---
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -163,6 +163,50 @@ def get_total_stats():
                    f"⬇️ Download: {format_traffic(values['down'])}\n"
                    f"📊 Всего: {format_traffic(total)}\n\n")
     return report.strip()
+
+# --- статистика за сегодня ---
+def get_today_stats():
+    today = datetime.now().strftime("%Y-%m-%d")
+    stats = {}
+    try:
+        with open(logFile, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith(f"[{today}"):
+                    parts = line.strip().split("] ")[1]
+                    name, traffic, *_ = parts.split("|")
+                    name = name.strip()
+                    traffic_value = traffic.strip().split()[0]
+                    traffic_unit = traffic.strip().split()[1]
+                    if traffic_unit == "GB":
+                        traffic_mb = float(traffic_value) * 1024
+                    else:
+                        traffic_mb = float(traffic_value)
+                    if name not in stats:
+                        stats[name] = 0
+                    stats[name] += traffic_mb
+    except FileNotFoundError:
+        return "<b>⚠️ Лог файл не найден.</b>"
+
+    if not stats:
+        return "<b>🔕 За сегодня сессий нет.</b>"
+
+    report = "<b>📊 Отчет за сегодня:</b>\n\n"
+    for name, mb in stats.items():
+        report += f"👤 <b>{name}</b> | 📊 {format_traffic(mb)}\n"
+    return report.strip()
+
+# --- команды и кнопки ---
+@bot.message_handler(commands=['start'])
+def start_message(message):
+    bot.reply_to(message, "✅ Мониторинг подключен!\nЯ буду присылать тебе отчеты каждые 3 минуты.")
+
+@bot.message_handler(commands=['menu'])
+def menu(message):
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn1 = types.KeyboardButton("За все время")
+    btn2 = types.KeyboardButton("Отчет за сегодня")
+    keyboard.add(btn1, btn2)
+    bot.send_message(message.chat.id,"Выбери отчёт:", reply_markup=keyboard)
 
 @bot.message_handler(func=lambda message: message.text in ["За все время", "Отчет за сегодня"])
 def handle_buttons(message):
