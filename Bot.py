@@ -1,41 +1,17 @@
 import sqlite3
 import time
-import json
-import os
-from CONFIG import bdPath, bdName, logFile, trafficFile, BOT_TOKEN, CHAT_ID
-import requests
+import threading
+import telebot
+from telebot import types
+from CONFIG import bdPath, bdName, logFile, BOT_TOKEN
 
+# --- инициализация бота ---
+bot = telebot.TeleBot(BOT_TOKEN)
+chat_ids = set()
 active_sessions = {}
-last_totals = {}  # для подсчёта трафика за последние 3 минуты
+last_totals = {}
 
-
-def send_session_end_message(name, start_time, end_time, duration, up_mb, down_mb):
-    message = (
-        f"📡 <b>Сессия завершена</b>\n"
-        f"👤 Клиент: <b>{name}</b>\n"
-        f"🕒 Период: {start_time} – {end_time}\n"
-        f"⏱️ Длительность: {duration}\n"
-        f"📊 Трафик: {format_traffic((up_mb + down_mb))}\n"
-        f"⬆️ Upload: {format_traffic(up_mb)}\n"
-        f"⬇️ Download: {format_traffic(down_mb)}"
-    )
-    send_telegram_message(message)
-
-
-def send_telegram_message(message):
-    for CHAT_Id in CHAT_ID:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": CHAT_Id,
-            "text": message,
-            "parse_mode": "HTML"
-        }
-        try:
-            requests.post(url, data=payload)
-        except Exception as e:
-            print(f"Ошибка отправки в Telegram: {e}")
-
-
+# --- форматирование ---
 def format_traffic(mb):
     return f"{mb:.2f} MB" if mb < 1024 else f"{mb/1024:.2f} GB"
 
@@ -49,27 +25,21 @@ def log_session(name, start_time, used_traffic, duration):
     with open(logFile, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {name} | {format_traffic(used_traffic)} | Длительность: {duration}\n")
 
-def main():
+# --- мониторинг сессий ---
+def check_sessions():
     global active_sessions, last_totals
-    connection = sqlite3.connect(f'{bdPath}/{bdName}')
+    connection = sqlite3.connect(f"{bdPath}/{bdName}")
     cursor = connection.cursor()
     cursor.execute("SELECT * FROM inbounds")
     rows = cursor.fetchall()
     connection.close()
 
     current_time = time.time()
-    current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(current_time))
-
-    print("=" * 74)
-    print(f"{'Текущий статус':^74}")
-    print(f"Время проверки: {current_time_str}")
-    print("-" * 74)
-
     updated_sessions = {}
-    any_active = False
     telegram_message = ""
+    any_active = False
 
-    # считаем текущий трафик для расчёта "за последние 3 минуты"
+    # считаем текущий трафик
     current_totals = {}
     for row in rows:
         name = row[5]
@@ -80,16 +50,13 @@ def main():
 
     # считаем разницу с прошлым замером
     traffic_diff = {}
-    total_diff = 0
     if last_totals:
         for name, total in current_totals.items():
             if name in last_totals:
                 diff = total - last_totals[name]
                 if diff > 0:
                     traffic_diff[name] = diff
-                    total_diff += diff
 
-    # логика сессий
     for row in rows:
         name = row[5]
         up = float(row[2])
@@ -125,9 +92,6 @@ def main():
 
                 if total_mb > 0:
                     log_session(name, session['start_time'], total_mb, duration)
-                    start_fmt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(session['start_time']))
-                    end_fmt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(current_time))
-                    send_session_end_message(name, start_fmt, end_fmt, duration, up_mb, down_mb)
         else:
             updated_sessions[name] = {
                 'start_time': current_time,
@@ -138,29 +102,42 @@ def main():
             }
 
     active_sessions = updated_sessions
+    last_totals = current_totals
 
-    # отправка в телеграм
     if not any_active:
-        send_telegram_message("<b>🔕 Нет активных сессий в данный момент.</b>")
+        return "<b>🔕 Нет активных сессий</b>"
     else:
-        msg = f"<b>📡 Активные сессии:</b>\n\n{telegram_message.strip()}"
-        send_telegram_message(msg)
+        return f"<b>📡 Активные сессии:</b>\n\n{telegram_message.strip()}"
 
-    last_totals = current_totals  # сохраняем текущее состояние
-    time.sleep(180)
-
-
-if __name__ == "__main__":
-    # приветственное сообщение
-    start_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    send_telegram_message(f"🤖 <b>Мониторинг сессий запущен!</b>\n"
-                          f"🕒 Время старта: {start_time}\n"
-                          f"⏱️ Интервал проверки: 3 минуты\n"
-                          f"📡 Буду присылать активные сессии и расход трафика.")
-
-    # ждём ровного часа
-    while time.ctime().split()[3][-2:] != "00":
-        pass
-
+# --- поток рассылки ---
+def send_periodic():
     while True:
-        main()
+        time.sleep(180)  # каждые 3 минуты
+        report = check_sessions()
+        for chat_id in chat_ids:
+            bot.send_message(chat_id, report, parse_mode="HTML")
+
+# --- команды ---
+@bot.message_handler(commands=['start'])
+def start_message(message):
+    chat_ids.add(message.chat.id)
+    bot.reply_to(message, "✅ Мониторинг подключен!\nЯ буду присылать тебе отчеты каждые 3 минуты.")
+
+@bot.message_handler(commands=['menu'])
+def menu(message):
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn1 = types.KeyboardButton("За все время")
+    btn2 = types.KeyboardButton("Отчет за сегодня")
+    keyboard.add(btn1, btn2)
+    bot.send_message(message.chat.id,"Выбери отчёт:", reply_markup=keyboard)
+
+@bot.message_handler(func=lambda message: message.text in ["За все время", "Отчет за сегодня"])
+def handle_buttons(message):
+    if message.text == "За все время":
+        bot.send_message(message.chat.id, "📊 Здесь будет отчёт за всё время (из лога).")
+    elif message.text == "Отчет за сегодня":
+        bot.send_message(message.chat.id, "📊 Здесь будет отчёт только за сегодня.")
+
+# --- запуск ---
+threading.Thread(target=send_periodic, daemon=True).start()
+bot.infinity_polling()
