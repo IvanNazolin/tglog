@@ -1,10 +1,10 @@
 import sqlite3
 import time
 import threading
+from datetime import datetime
 import telebot
 from telebot import types
 from CONFIG import bdPath, bdName, logFile, BOT_TOKEN,CHAT_ID
-from datetime import datetime
 
 # --- инициализация бота ---
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -25,6 +25,23 @@ def log_session(name, start_time, used_traffic, duration):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
     with open(logFile, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {name} | {format_traffic(used_traffic)} | Длительность: {duration}\n")
+
+# --- отправка сообщений о завершении сессии ---
+def send_telegram_message(message):
+    for chat_id in CHAT_ID:
+        bot.send_message(chat_id, message, parse_mode="HTML")
+
+def send_session_end_message(name, start_time, end_time, duration, up_mb, down_mb):
+    message = (
+        f"📡 <b>Сессия завершена</b>\n"
+        f"👤 Клиент: <b>{name}</b>\n"
+        f"🕒 Период: {start_time} – {end_time}\n"
+        f"⏱️ Длительность: {duration}\n"
+        f"📊 Трафик: {format_traffic(up_mb + down_mb)}\n"
+        f"⬆️ Upload: {format_traffic(up_mb)}\n"
+        f"⬇️ Download: {format_traffic(down_mb)}"
+    )
+    send_telegram_message(message)
 
 # --- мониторинг сессий ---
 def check_sessions():
@@ -70,7 +87,6 @@ def check_sessions():
                 duration = format_duration(duration_secs)
                 used_traffic = ((up - session['start_up']) + (down - session['start_down'])) / 2**20
 
-                # добавляем прирост за последние 3 минуты
                 extra = ""
                 if name in traffic_diff:
                     extra = f" | + {format_traffic(traffic_diff[name])}"
@@ -93,6 +109,9 @@ def check_sessions():
 
                 if total_mb > 0:
                     log_session(name, session['start_time'], total_mb, duration)
+                    start_fmt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(session['start_time']))
+                    end_fmt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(current_time))
+                    send_session_end_message(name, start_fmt, end_fmt, duration, up_mb, down_mb)
         else:
             updated_sessions[name] = {
                 'start_time': current_time,
@@ -118,20 +137,7 @@ def send_periodic():
         for chat_id in chat_ids:
             bot.send_message(chat_id, report, parse_mode="HTML")
 
-# --- команды ---
-@bot.message_handler(commands=['start'])
-def start_message(message):
-   # chat_ids.add(message.chat.id)
-    bot.reply_to(message, "✅ Мониторинг подключен!\nЯ буду присылать тебе отчеты каждые 3 минуты.")
-
-@bot.message_handler(commands=['menu'])
-def menu(message):
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn1 = types.KeyboardButton("За все время")
-    btn2 = types.KeyboardButton("Отчет за сегодня")
-    keyboard.add(btn1, btn2)
-    bot.send_message(message.chat.id,"Выбери отчёт:", reply_markup=keyboard)
-
+# --- статистика за всё время ---
 def get_total_stats():
     connection = sqlite3.connect(f"{bdPath}/{bdName}")
     cursor = connection.cursor()
@@ -142,14 +148,13 @@ def get_total_stats():
     stats = {}
     for row in rows:
         name = row[5]
-        up = float(row[2]) / 2**20   # в MB
+        up = float(row[2]) / 2**20
         down = float(row[3]) / 2**20
         if name not in stats:
             stats[name] = {"up": 0, "down": 0}
         stats[name]["up"] += up
         stats[name]["down"] += down
 
-    # формируем текст
     report = "<b>📊 Статистика за всё время:</b>\n\n"
     for name, values in stats.items():
         total = values["up"] + values["down"]
@@ -157,44 +162,6 @@ def get_total_stats():
                    f"⬆️ Upload: {format_traffic(values['up'])}\n"
                    f"⬇️ Download: {format_traffic(values['down'])}\n"
                    f"📊 Всего: {format_traffic(total)}\n\n")
-    return report.strip()
-
-def get_today_stats():
-    today = datetime.now().strftime("%Y-%m-%d")
-    stats = {}
-
-    try:
-        with open(logFile, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.startswith(f"[{today}"):
-                    # формат строки: [YYYY-MM-DD HH:MM:SS] name | traffic | ...
-                    try:
-                        parts = line.strip().split("] ")[1]  # отрезаем дату
-                        name, traffic, *_ = parts.split("|")
-                        name = name.strip()
-                        traffic_value = traffic.strip().split()[0]  # только число
-                        traffic_unit = traffic.strip().split()[1]   # MB или GB
-
-                        # приводим в MB
-                        if traffic_unit == "GB":
-                            traffic_mb = float(traffic_value) * 1024
-                        else:
-                            traffic_mb = float(traffic_value)
-
-                        if name not in stats:
-                            stats[name] = 0
-                        stats[name] += traffic_mb
-                    except Exception:
-                        continue
-    except FileNotFoundError:
-        return "<b>⚠️ Лог файл не найден.</b>"
-
-    if not stats:
-        return "<b>🔕 За сегодня сессий нет.</b>"
-
-    report = "<b>📊 Отчет за сегодня:</b>\n\n"
-    for name, mb in stats.items():
-        report += f"👤 <b>{name}</b> | 📊 {format_traffic(mb)}\n"
     return report.strip()
 
 @bot.message_handler(func=lambda message: message.text in ["За все время", "Отчет за сегодня"])
