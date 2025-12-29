@@ -4,6 +4,8 @@ import threading
 from datetime import datetime
 import telebot
 from telebot import types
+import os
+import subprocess 
 from CONFIG import bdPath, bdName, logFile, BOT_TOKEN, CHAT_ID
 
 # --- инициализация бота ---
@@ -132,7 +134,7 @@ def check_sessions():
 # --- поток рассылки ---
 def send_periodic():
     while True:
-        time.sleep(180)  # каждые 3 минуты
+        time.sleep(180)  # каждые 3 минуты №180
         report = check_sessions()
         for chat_id in chat_ids:
             bot.send_message(chat_id, report, parse_mode="HTML")
@@ -195,6 +197,33 @@ def get_today_stats():
         report += f"👤 <b>{name}</b> | 📊 {format_traffic(mb)}\n"
     return report.strip()
 
+def restart():
+    restart_script = "/restart.sh"
+
+    # Проверяем существование файла
+    if os.path.exists(restart_script):
+        try:
+            # Запускаем скрипт
+            result = subprocess.run([restart_script], 
+                                capture_output=True, 
+                                text=True,
+                                check=True)
+            print(f"Код возврата: {result.returncode}")
+            print(f"Вывод: {result.stdout}")
+            return True, "✅ Перезапуск выполнен успешно"
+        except subprocess.CalledProcessError as e:
+            print(f"Ошибка при выполнении скрипта: {e}")
+            print(f"Вывод: {e.stdout}")
+            print(f"Ошибки: {e.stderr}")
+            return False, f"❌ Ошибка при перезапуске: {e}"
+        except Exception as e:
+            print(f"Неожиданная ошибка: {e}")
+            return False, f"❌ Неожиданная ошибка: {e}"
+    else:
+        error_msg = f"❌ Файл {restart_script} не найден"
+        print(error_msg)
+        return False, error_msg
+
 # --- команды и кнопки ---
 @bot.message_handler(commands=['start'])
 def start_message(message):
@@ -205,10 +234,11 @@ def menu(message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn1 = types.KeyboardButton("За все время")
     btn2 = types.KeyboardButton("Отчет за сегодня")
-    keyboard.add(btn1, btn2)
+    btn3 = types.KeyboardButton("Перезапуск")
+    keyboard.add(btn1, btn2, btn3)
     bot.send_message(message.chat.id,"Выбери отчёт:", reply_markup=keyboard)
 
-@bot.message_handler(func=lambda message: message.text in ["За все время", "Отчет за сегодня"])
+@bot.message_handler(func=lambda message: message.text in ["За все время", "Отчет за сегодня","Перезапуск"])
 def handle_buttons(message):
     if message.text == "За все время":
         report = get_total_stats()
@@ -216,7 +246,12 @@ def handle_buttons(message):
     elif message.text == "Отчет за сегодня":
         report = get_today_stats()
         bot.send_message(message.chat.id, report, parse_mode="HTML")
+    elif message.text == "Перезапуск":
+        bot.send_message(message.chat.id, "⏳ Запуск перезагрузки...", parse_mode="HTML")
+        success, result_msg = restart()
+        bot.send_message(message.chat.id, result_msg, parse_mode="HTML")
 
 # --- запуск ---
+send_telegram_message("Бот запущен")
 threading.Thread(target=send_periodic, daemon=True).start()
 bot.infinity_polling()
