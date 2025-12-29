@@ -6,7 +6,7 @@ import telebot
 from telebot import types
 import os
 import subprocess 
-from CONFIG import bdPath, bdName, logFile, BOT_TOKEN, CHAT_ID
+from CONFIG import bdPath, bdName, logFile, BOT_TOKEN, CHAT_ID, RESTART_PATH
 
 # --- инициализация бота ---
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -198,7 +198,7 @@ def get_today_stats():
     return report.strip()
 
 def restart():
-    restart_script = "/restart.sh"
+    restart_script = RESTART_PATH
 
     # Проверяем существование файла
     if os.path.exists(restart_script):
