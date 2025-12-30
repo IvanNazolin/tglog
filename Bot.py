@@ -6,7 +6,9 @@ import telebot
 from telebot import types
 import os
 import subprocess 
-from CONFIG import bdPath, bdName, logFile, BOT_TOKEN, CHAT_ID, RESTART_PATH
+from CONFIG import bdPath, bdName, logFile, BOT_TOKEN, CHAT_ID, RESTART_PATH\
+
+
 
 # --- инициализация бота ---
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -45,7 +47,7 @@ def send_session_end_message(name, start_time, end_time, duration, up_mb, down_m
     )
     send_telegram_message(message)
 
-# --- мониторинг сессий ---
+
 def check_sessions():
     global active_sessions, last_totals
     connection = sqlite3.connect(f"{bdPath}/{bdName}")

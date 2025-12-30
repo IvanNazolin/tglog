@@ -1,2 +1,4 @@
 CONFIG.py
 .DS_Store
+output.log
+sessions.log
